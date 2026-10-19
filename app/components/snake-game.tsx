@@ -5,8 +5,10 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Play, RotateCcw, Trophy, Zap, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from 'lucide-react'
 
 const CELL_SIZE = 20
-const GRID_WIDTH = 25
-const GRID_HEIGHT = 25
+// 35×35 = 1,225 cells — roughly double the original 25×25 (625) play area
+const GRID_WIDTH = 35
+const GRID_HEIGHT = 35
+const START: Point = { x: Math.floor(GRID_WIDTH / 2), y: Math.floor(GRID_HEIGHT / 2) }
 const CANVAS_WIDTH = CELL_SIZE * GRID_WIDTH
 const CANVAS_HEIGHT = CELL_SIZE * GRID_HEIGHT
 const INITIAL_SPEED = 150
@@ -16,16 +18,39 @@ const SPEED_INCREMENT = 3
 type Point = { x: number; y: number }
 type Direction = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT'
 type GameState = 'IDLE' | 'PLAYING' | 'GAME_OVER'
+type Fruit = { name: string; emoji: string; points: number; weight: number; glow: string }
+type Food = Point & { fruit: Fruit }
 
-function randomFood(snake: Point[]): Point {
-  let food: Point
+// Rarer fruits are worth more points
+const FRUITS: Fruit[] = [
+  { name: 'Apple', emoji: '🍎', points: 10, weight: 30, glow: '#ef4444' },
+  { name: 'Banana', emoji: '🍌', points: 15, weight: 22, glow: '#facc15' },
+  { name: 'Orange', emoji: '🍊', points: 15, weight: 18, glow: '#f97316' },
+  { name: 'Cherries', emoji: '🍒', points: 20, weight: 12, glow: '#dc2626' },
+  { name: 'Grapes', emoji: '🍇', points: 25, weight: 9, glow: '#a855f7' },
+  { name: 'Strawberry', emoji: '🍓', points: 30, weight: 6, glow: '#f43f5e' },
+  { name: 'Watermelon', emoji: '🍉', points: 50, weight: 3, glow: '#22c55e' },
+]
+const TOTAL_WEIGHT = FRUITS.reduce((sum, f) => sum + f.weight, 0)
+
+function randomFruit(): Fruit {
+  let roll = Math.random() * TOTAL_WEIGHT
+  for (const f of FRUITS) {
+    roll -= f.weight
+    if (roll < 0) return f
+  }
+  return FRUITS[0]
+}
+
+function randomFood(snake: Point[]): Food {
+  let pos: Point
   do {
-    food = {
+    pos = {
       x: Math.floor(Math.random() * GRID_WIDTH),
       y: Math.floor(Math.random() * GRID_HEIGHT),
     }
-  } while ((snake ?? []).some((s: Point) => s?.x === food.x && s?.y === food.y))
-  return food
+  } while ((snake ?? []).some((s: Point) => s?.x === pos.x && s?.y === pos.y))
+  return { ...pos, fruit: randomFruit() }
 }
 
 export default function SnakeGame() {
@@ -34,10 +59,12 @@ export default function SnakeGame() {
   const [score, setScore] = useState(0)
   const [highScore, setHighScore] = useState(0)
 
-  const snakeRef = useRef<Point[]>([{ x: 12, y: 12 }])
+  const [lastFruit, setLastFruit] = useState<Fruit | null>(null)
+
+  const snakeRef = useRef<Point[]>([START])
   const dirRef = useRef<Direction>('RIGHT')
   const nextDirRef = useRef<Direction>('RIGHT')
-  const foodRef = useRef<Point>({ x: 5, y: 5 })
+  const foodRef = useRef<Food>({ x: 5, y: 5, fruit: FRUITS[0] })
   const scoreRef = useRef(0)
   const speedRef = useRef(INITIAL_SPEED)
   const gameLoopRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -82,22 +109,22 @@ export default function SnakeGame() {
       ctx.stroke()
     }
 
-    // Food with glow
+    // Fruit with a soft glow behind it
     const food = foodRef.current
     if (food) {
-      ctx.shadowColor = '#ef4444'
-      ctx.shadowBlur = 12
-      ctx.fillStyle = '#ef4444'
+      const cx = food.x * CELL_SIZE + CELL_SIZE / 2
+      const cy = food.y * CELL_SIZE + CELL_SIZE / 2
+      ctx.shadowColor = food.fruit.glow
+      ctx.shadowBlur = 14
+      ctx.fillStyle = `${food.fruit.glow}33`
       ctx.beginPath()
-      ctx.arc(
-        food.x * CELL_SIZE + CELL_SIZE / 2,
-        food.y * CELL_SIZE + CELL_SIZE / 2,
-        CELL_SIZE / 2 - 2,
-        0,
-        Math.PI * 2
-      )
+      ctx.arc(cx, cy, CELL_SIZE / 2, 0, Math.PI * 2)
       ctx.fill()
       ctx.shadowBlur = 0
+      ctx.font = `${CELL_SIZE - 2}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(food.fruit.emoji, cx, cy + 1)
     }
 
     // Snake
@@ -154,9 +181,10 @@ export default function SnakeGame() {
     const food = foodRef.current
 
     if (food && newHead.x === food.x && newHead.y === food.y) {
-      // Ate food
-      scoreRef.current += 10
+      // Ate a fruit — score depends on which one
+      scoreRef.current += food.fruit.points
       setScore(scoreRef.current)
+      setLastFruit(food.fruit)
       foodRef.current = randomFood(newSnake)
       speedRef.current = Math.max(MIN_SPEED, INITIAL_SPEED - (newSnake.length - 1) * SPEED_INCREMENT)
     } else {
@@ -182,13 +210,14 @@ export default function SnakeGame() {
   }, [])
 
   const startGame = useCallback(() => {
-    snakeRef.current = [{ x: 12, y: 12 }]
+    snakeRef.current = [START]
     dirRef.current = 'RIGHT'
     nextDirRef.current = 'RIGHT'
     scoreRef.current = 0
     speedRef.current = INITIAL_SPEED
-    foodRef.current = randomFood([{ x: 12, y: 12 }])
+    foodRef.current = randomFood([START])
     setScore(0)
+    setLastFruit(null)
     setGameState('PLAYING')
     gameStateRef.current = 'PLAYING'
     draw()
@@ -276,15 +305,33 @@ export default function SnakeGame() {
             </div>
           </>
         )}
+        {gameState === 'PLAYING' && lastFruit && (
+          <>
+            <div className="w-px h-6 bg-border" />
+            <div className="flex items-center gap-1.5" title={`Last eaten: ${lastFruit.name}`}>
+              <span className="text-lg leading-none">{lastFruit.emoji}</span>
+              <span className="text-sm font-mono font-bold text-primary">+{lastFruit.points}</span>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Canvas container */}
-      <div className="relative rounded-xl overflow-hidden border-2 border-border" style={{ boxShadow: '0 0 40px rgba(34, 197, 94, 0.1)' }}>
+      <div
+        className="relative rounded-xl overflow-hidden border-2 border-border"
+        style={{
+          boxShadow: '0 0 40px rgba(34, 197, 94, 0.1)',
+          // Scale down on smaller screens so the whole board stays visible
+          width: `min(${CANVAS_WIDTH}px, calc(100vw - 2rem), calc(100vh - 13rem))`,
+          minWidth: '280px',
+          aspectRatio: `${CANVAS_WIDTH} / ${CANVAS_HEIGHT}`,
+        }}
+      >
         <canvas
           ref={canvasRef}
           width={CANVAS_WIDTH}
           height={CANVAS_HEIGHT}
-          className="block"
+          className="block w-full h-full"
         />
 
         {/* Idle overlay */}
@@ -303,9 +350,16 @@ export default function SnakeGame() {
                 className="flex flex-col items-center gap-6"
               >
                 <div className="text-5xl font-display font-bold text-primary tracking-tight">SNAKE</div>
-                <p className="text-muted-foreground text-sm max-w-[260px] text-center">
-                  Use arrow keys or WASD to move. Eat the red food to grow. Don&apos;t hit the walls or yourself!
+                <p className="text-muted-foreground text-sm max-w-[300px] text-center">
+                  Use arrow keys or WASD to move. Eat fruit to grow. Don&apos;t hit the walls or yourself!
                 </p>
+                <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 max-w-[340px] text-xs font-mono text-muted-foreground">
+                  {FRUITS.map((f) => (
+                    <span key={f.name} className="flex items-center gap-1">
+                      <span className="text-base leading-none">{f.emoji}</span>{f.points}
+                    </span>
+                  ))}
+                </div>
                 <button
                   onClick={startGame}
                   className="flex items-center gap-2 px-8 py-3 rounded-lg bg-primary text-primary-foreground font-semibold text-lg hover:brightness-110 transition-all duration-fast active:scale-95"
